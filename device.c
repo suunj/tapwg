@@ -25,6 +25,7 @@
 #include <net/rtnetlink.h>
 #include <net/ip_tunnels.h>
 #include <net/addrconf.h>
+#include <linux/etherdevice.h>
 
 static LIST_HEAD(device_list);
 
@@ -239,6 +240,14 @@ static const struct net_device_ops netdev_ops = {
 	.ndo_start_xmit		= wg_xmit,
 };
 
+static const struct net_device_ops tapnetdev_ops = {
+	.ndo_open		= wg_open,
+	.ndo_stop		= wg_stop,
+	.ndo_start_xmit		= wg_xmit,
+	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
+};
+
 static void wg_destruct(struct net_device *dev)
 {
 	struct wg_device *wg = netdev_priv(dev);
@@ -304,6 +313,36 @@ static void wg_setup(struct net_device *dev)
 
 	memset(wg, 0, sizeof(*wg));
 	wg->dev = dev;
+}
+
+static void tapwg_setup(struct net_device *dev)
+{
+    struct wg_device *wg = netdev_priv(dev);
+    enum { WG_NETDEV_FEATURES = NETIF_F_HW_CSUM | NETIF_F_RXCSUM |
+	    NETIF_F_SG | NETIF_F_GSO |
+		    NETIF_F_GSO_SOFTWARE | NETIF_F_HIGHDMA };
+    const int overhead = MESSAGE_MINIMUM_LENGTH + sizeof(struct udphdr) +
+                         max(sizeof(struct ipv6hdr), sizeof(struct iphdr));
+
+    ether_setup(dev);
+    dev->netdev_ops = &tapnetdev_ops;
+    dev->needed_headroom = DATA_PACKET_HEAD_ROOM;
+    dev->needed_tailroom = noise_encrypted_len(MESSAGE_PADDING_MULTIPLE);
+    dev->priv_flags |= IFF_NO_QUEUE;
+    dev->priv_flags &= ~IFF_TX_SKB_SHARING;
+    dev->features |= WG_NETDEV_FEATURES;
+    dev->hw_features |= WG_NETDEV_FEATURES;
+    dev->hw_enc_features |= WG_NETDEV_FEATURES;
+    dev->mtu = ETH_DATA_LEN - overhead - ETH_HLEN;   // 1406
+    dev->max_mtu = round_down(INT_MAX, MESSAGE_PADDING_MULTIPLE) - overhead - ETH_HLEN;
+    eth_hw_addr_random(dev);
+
+    dev->lltx = true;
+    dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
+    SET_NETDEV_DEVTYPE(dev, &device_type);
+    netif_keep_dst(dev);
+    memset(wg, 0, sizeof(*wg));
+    wg->dev = dev;
 }
 
 static int wg_newlink(struct net *src_net, struct net_device *dev,
@@ -406,6 +445,13 @@ static struct rtnl_link_ops link_ops __read_mostly = {
 	.newlink		= wg_newlink,
 };
 
+static struct rtnl_link_ops taplink_ops __read_mostly = {
+    .kind      = "tapwireguard",
+    .priv_size = sizeof(struct wg_device),
+    .setup     = tapwg_setup,
+    .newlink   = wg_newlink,
+};
+
 static void wg_netns_pre_exit(struct net *net)
 {
 	struct wg_device *wg;
@@ -450,9 +496,13 @@ int __init wg_device_init(void)
 	ret = rtnl_link_register(&link_ops);
 	if (ret)
 		goto error_pernet;
-
+	ret = rtnl_link_register(&taplink_ops);
+	if (ret < 0)
+		goto error_link;
 	return 0;
 
+error_link:
+	rtnl_link_unregister(&link_ops);
 error_pernet:
 	unregister_pernet_device(&pernet_ops);
 error_vm:
@@ -464,6 +514,7 @@ error_pm:
 
 void wg_device_uninit(void)
 {
+	rtnl_link_unregister(&taplink_ops);
 	rtnl_link_unregister(&link_ops);
 	unregister_pernet_device(&pernet_ops);
 	unregister_random_vmfork_notifier(&vm_notifier);
