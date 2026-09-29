@@ -354,8 +354,12 @@ int wg_allowedips_read_node(struct allowedips_node *node, u8 ip[16], u8 *cidr)
 
 /* Returns a strong reference to a peer */
 struct wg_peer *wg_allowedips_lookup_dst(struct allowedips *table,
-					 struct sk_buff *skb)
+					 struct sk_buff *skb, bool is_tap)
 {
+	if (is_tap) {
+		u32 zero = 0;
+		return lookup(table->root4, 32, &zero);
+	}
 	if (skb->protocol == htons(ETH_P_IP))
 		return lookup(table->root4, 32, &ip_hdr(skb)->daddr);
 	else if (skb->protocol == htons(ETH_P_IPV6))
@@ -365,8 +369,12 @@ struct wg_peer *wg_allowedips_lookup_dst(struct allowedips *table,
 
 /* Returns a strong reference to a peer */
 struct wg_peer *wg_allowedips_lookup_src(struct allowedips *table,
-					 struct sk_buff *skb)
+					 struct sk_buff *skb, bool is_tap)
 {
+	if (is_tap) {
+		u32 zero = 0;
+		return lookup(table->root4, 32, &zero);
+	}
 	if (skb->protocol == htons(ETH_P_IP))
 		return lookup(table->root4, 32, &ip_hdr(skb)->saddr);
 	else if (skb->protocol == htons(ETH_P_IPV6))

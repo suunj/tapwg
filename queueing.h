@@ -67,9 +67,14 @@ struct packet_cb {
 #define PACKET_CB(skb) ((struct packet_cb *)((skb)->cb))
 #define PACKET_PEER(skb) (PACKET_CB(skb)->keypair->entry.peer)
 
-static inline bool wg_check_packet_protocol(struct sk_buff *skb)
+static inline bool wg_check_packet_protocol(struct sk_buff *skb, bool is_tap)
 {
-	__be16 real_protocol = ip_tunnel_parse_protocol(skb);
+	__be16 real_protocol;
+
+	if (is_tap)
+		return true;
+
+	real_protocol = ip_tunnel_parse_protocol(skb);
 	return real_protocol && skb->protocol == real_protocol;
 }
 

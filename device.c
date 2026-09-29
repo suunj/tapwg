@@ -145,13 +145,13 @@ static netdev_tx_t wg_xmit(struct sk_buff *skb, struct net_device *dev)
 	u32 mtu;
 	int ret;
 
-	if (unlikely(!wg_check_packet_protocol(skb))) {
+	if (unlikely(!wg_check_packet_protocol(skb, wg->is_tap))) {
 		ret = -EPROTONOSUPPORT;
 		net_dbg_ratelimited("%s: Invalid IP packet\n", dev->name);
 		goto err;
 	}
 
-	peer = wg_allowedips_lookup_dst(&wg->peer_allowedips, skb);
+	peer = wg_allowedips_lookup_dst(&wg->peer_allowedips, skb, wg->is_tap);
 	if (unlikely(!peer)) {
 		ret = -ENOKEY;
 		if (skb->protocol == htons(ETH_P_IP))
@@ -342,6 +342,7 @@ static void tapwg_setup(struct net_device *dev)
     SET_NETDEV_DEVTYPE(dev, &device_type);
     netif_keep_dst(dev);
     memset(wg, 0, sizeof(*wg));
+    wg->is_tap = true;
     wg->dev = dev;
 }
 

@@ -49,7 +49,7 @@ static int prepare_skb_header(struct sk_buff *skb, struct wg_device *wg)
 	size_t data_offset, data_len, header_len;
 	struct udphdr *udp;
 
-	if (unlikely(!wg_check_packet_protocol(skb) ||
+	if (unlikely(!wg_check_packet_protocol(skb, wg->is_tap) ||
 		     skb_transport_header(skb) < skb->head ||
 		     (skb_transport_header(skb) + sizeof(struct udphdr)) >
 			     skb_tail_pointer(skb)))
@@ -364,6 +364,31 @@ static void wg_packet_consume_data_done(struct wg_peer *peer,
 
 	wg_timers_data_received(peer);
 
+	if (peer->device->is_tap) {
+		/* Payload is a raw ethernet frame: skip IP parsing entirely. */
+		if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
+			goto dishonest_packet_size;
+		skb->dev = dev;
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		skb->csum_level = ~0;
+		/* eth_type_trans() pulls the MAC header, sets skb->protocol
+		 * and skb->pkt_type (host/broadcast/multicast).
+		 */
+		skb->protocol = eth_type_trans(skb, dev);
+		len = skb->len;
+		len_before_trim = skb->len;
+
+		routed_peer = wg_allowedips_lookup_src(
+				&peer->device->peer_allowedips, skb, true);
+		wg_peer_put(routed_peer);
+		if (unlikely(routed_peer != peer))
+			goto dishonest_packet_peer;
+
+		napi_gro_receive(&peer->napi, skb);
+		update_rx_stats(peer, message_data_len(len_before_trim));
+		return;
+	}
+
 	if (unlikely(skb_network_header(skb) < skb->head))
 		goto dishonest_packet_size;
 	if (unlikely(!(pskb_network_may_pull(skb, sizeof(struct iphdr)) &&
@@ -402,7 +427,7 @@ static void wg_packet_consume_data_done(struct wg_peer *peer,
 		goto packet_processed;
 
 	routed_peer = wg_allowedips_lookup_src(&peer->device->peer_allowedips,
-					       skb);
+					       skb, peer->device->is_tap);
 	wg_peer_put(routed_peer); /* We don't need the extra reference. */
 
 	if (unlikely(routed_peer != peer))

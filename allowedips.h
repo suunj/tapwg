@@ -45,9 +45,9 @@ int wg_allowedips_read_node(struct allowedips_node *node, u8 ip[16], u8 *cidr);
 
 /* These return a strong reference to a peer: */
 struct wg_peer *wg_allowedips_lookup_dst(struct allowedips *table,
-					 struct sk_buff *skb);
+					 struct sk_buff *skb, bool is_tap);
 struct wg_peer *wg_allowedips_lookup_src(struct allowedips *table,
-					 struct sk_buff *skb);
+					 struct sk_buff *skb, bool is_tap);
 
 #ifdef DEBUG
 bool wg_allowedips_selftest(void);
